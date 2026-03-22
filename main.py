@@ -1,15 +1,20 @@
+import os
+from dotenv import load_dotenv
 import requests
 import time
 from datetime import datetime
 from shapely.geometry import Point, Polygon
+
 import threading
 
 from emailer import send_alert
 
-BASE_URL = "https://3qbqr98twd.execute-api.us-west-2.amazonaws.com/test/clinicianstatus"
-CLINICIAN_IDS = [1,2,3,4,5,6,7]
-DELAY_INTERVAL_SECONDS = 5
-ALERT_INTERVAL_SECONDS = 120
+load_dotenv()
+
+BASE_URL = os.getenv("BASE_URL")
+CLINICIAN_IDS = [1,2,3,4,5,6]
+DELAY_INTERVAL_SECONDS = 30 # Time between Polling Rounds
+ALERT_INTERVAL_SECONDS = 120 # Time between re-alerts on same clinician
 
 # Check if Clinician in ANY zone
 def is_in_zone(clinician_location, zones):
@@ -18,7 +23,7 @@ def is_in_zone(clinician_location, zones):
     
     in_zone = False
     for polygon in polygons:
-        if polygon.covers(point):
+        if polygon.covers(point): # covers() includes boundary as in zone
             in_zone = True
             break
 
@@ -26,7 +31,7 @@ def is_in_zone(clinician_location, zones):
 
 # Main Polling Loop
 def start():
-    print("STARTING POLL")
+    print("Starting clinician monitoring")
     
     # { cid: { "first": timestamp, "last": timestamp } }
     alert_timestamps = {}
@@ -40,8 +45,8 @@ def start():
                 response = requests.get(url, timeout=5)
                 data = response.json()
             except Exception as e:
-
-                error_msg = f"[API] {display_time_now} Failed to fetch status for clinician #{cid}: {e}\n"
+                # Alert and skip clinician if API call fails
+                error_msg = f"[API] {display_time_now} Failed to fetch status for clinician #{cid} : {e}\n"
                 with open("errors.txt", "a") as f:
                     f.write(error_msg)
                 threading.Thread(target=send_alert, args=(cid, error_msg)).start()
@@ -49,6 +54,7 @@ def start():
 
             features = data.get("features")
             if not features:
+                # Alert and skip clinician if bad response
                 error_msg = f"[ERROR] {display_time_now} Clinician #{cid}: bad response\n"
                 with open("errors.txt", "a") as f:
                     f.write(error_msg)
@@ -57,6 +63,8 @@ def start():
 
             clinician_location = features[0]["geometry"]["coordinates"] # [lon, lat]
 
+
+            # Clinicians 2 and 3 have irregular zones
             if cid == 2:
                 zones = features[1]["geometry"]["coordinates"]
 
@@ -66,19 +74,9 @@ def start():
             else:
                 zones = [features[1]["geometry"]["coordinates"][0]]
 
-
-            print(f"CLINICIAN {cid}: ", end="")
-
-            """
-            print(f"COORDS: {clinician_location}")
-            for i, zone in enumerate(zones):
-                print(f"ZONE {i+1}:")
-                for point in zone:
-                    print(f" {point}")
-            """
-
             in_zone = is_in_zone(clinician_location, zones)
-            print("IN ZONE" if in_zone else "NOT IN ZONE")
+            if not in_zone:
+                print(f"Clinician #{cid} is NOT in zone")
 
             if not in_zone:
 
@@ -100,8 +98,7 @@ def start():
                     msg = None
 
                 if msg:
-                    with open("alerts.txt", "a") as f:
-                        f.write(msg)
+                    # Send email in background thread so it doesn't block the polling loop
                     threading.Thread(target=send_alert, args=(cid, msg)).start()
 
             else:
@@ -109,12 +106,9 @@ def start():
                     # Has re-entered zone
                     minutes_out = int((time.time() - alert_timestamps[cid]["first"]) / 60)
                     msg = f"[INFO] {display_time_now} Clinician #{cid} has RE-ENTERED their zone after {minutes_out} minute(s)\n"
-                    with open("alerts.txt", "a") as f:
-                        f.write(msg)
                     threading.Thread(target=send_alert, args=(cid, msg)).start()
                     del alert_timestamps[cid]
         
-        print(f"WAITING {DELAY_INTERVAL_SECONDS} SECONDS")
         time.sleep(DELAY_INTERVAL_SECONDS)
 
 

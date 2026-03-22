@@ -1,9 +1,14 @@
 import smtplib
 from email.message import EmailMessage
 
-SENDER_EMAIL = "briansen124@gmail.com"
-SENDER_APP_PASSWORD = "ehba cqqt ahdx miyr"
-RECEIVER_EMAIL = "briansen142@gmail.com"
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+SENDER_APP_PASSWORD = os.getenv("SENDER_APP_PASSWORD") # myaccount.google.com/apppasswords
+RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL")
 
 def send_alert(cid, contents):
 
@@ -13,7 +18,11 @@ def send_alert(cid, contents):
     email["From"] = SENDER_EMAIL
     email["To"] = RECEIVER_EMAIL
 
-    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as s:
-        s.login(SENDER_EMAIL, SENDER_APP_PASSWORD)
-        s.send_message(email)
-        
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as s:
+            s.login(SENDER_EMAIL, SENDER_APP_PASSWORD)
+            s.send_message(email)
+    except Exception as e:
+        error_msg = f"[EMAIL] Failed to send alert for clinician #{cid}, contents: {contents} : {e}"
+        with open("errors.txt", "a") as f:
+            f.write(error_msg)
